@@ -133,7 +133,7 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 		public void DecompileProject(PEFile moduleDefinition, string targetDirectory, CancellationToken cancellationToken = default(CancellationToken))
 		{
 			string projectFileName = Path.Combine(targetDirectory, CleanUpFileName(moduleDefinition.Name) + ".csproj");
-			using (var writer = new StreamWriter(projectFileName))
+			using (var writer = new StreamWriter(ValidatePath(projectFileName)))
 			{
 				DecompileProject(moduleDefinition, targetDirectory, writer, cancellationToken);
 			}
@@ -145,14 +145,14 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 			{
 				throw new InvalidOperationException("Must set TargetDirectory");
 			}
-			TargetDirectory = targetDirectory;
+			TargetDirectory = new DirectoryInfo(targetDirectory).FullName;
 			directories.Clear();
 			var files = WriteCodeFilesInProject(moduleDefinition, cancellationToken).ToList();
 			files.AddRange(WriteResourceFilesInProject(moduleDefinition));
 			files.AddRange(WriteMiscellaneousFilesInProject(moduleDefinition));
 			if (StrongNameKeyFile != null)
 			{
-				File.Copy(StrongNameKeyFile, Path.Combine(targetDirectory, Path.GetFileName(StrongNameKeyFile)), overwrite: true);
+				File.Copy(StrongNameKeyFile, ValidatePath(Path.Combine(targetDirectory, Path.GetFileName(StrongNameKeyFile))), overwrite: true);
 			}
 
 			projectWriter.Write(projectFileWriter, this, files, moduleDefinition);
@@ -191,9 +191,9 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 
 			const string prop = "Properties";
 			if (directories.Add(prop))
-				Directory.CreateDirectory(Path.Combine(TargetDirectory, prop));
+				Directory.CreateDirectory(ValidatePath(Path.Combine(TargetDirectory, prop), true));
 			string assemblyInfo = Path.Combine(prop, "AssemblyInfo.cs");
-			using (StreamWriter w = new StreamWriter(Path.Combine(TargetDirectory, assemblyInfo)))
+			using (StreamWriter w = new StreamWriter(ValidatePath(Path.Combine(TargetDirectory, assemblyInfo))))
 			{
 				syntaxTree.AcceptVisitor(new CSharpOutputVisitor(w, Settings.CSharpFormattingOptions));
 			}
@@ -216,7 +216,7 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 					{
 						string dir = Settings.UseNestedDirectoriesForNamespaces ? CleanUpPath(ns) : CleanUpDirectoryName(ns);
 						if (directories.Add(dir))
-							Directory.CreateDirectory(Path.Combine(TargetDirectory, dir));
+							Directory.CreateDirectory(ValidatePath(Path.Combine(TargetDirectory, dir), true));
 						return Path.Combine(dir, file);
 					}
 				}, StringComparer.OrdinalIgnoreCase).ToList();
@@ -230,7 +230,7 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 					CancellationToken = cancellationToken
 				},
 				delegate (IGrouping<string, TypeDefinitionHandle> file) {
-					using (StreamWriter w = new StreamWriter(Path.Combine(TargetDirectory, file.Key)))
+					using (StreamWriter w = new StreamWriter(ValidatePath(Path.Combine(TargetDirectory, file.Key))))
 					{
 						try
 						{
@@ -274,7 +274,7 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 								string dirName = Path.GetDirectoryName(fileName);
 								if (!string.IsNullOrEmpty(dirName) && directories.Add(dirName))
 								{
-									Directory.CreateDirectory(Path.Combine(TargetDirectory, dirName));
+									Directory.CreateDirectory(ValidatePath(Path.Combine(TargetDirectory, dirName)));
 								}
 								Stream entryStream = (Stream)value;
 								entryStream.Position = 0;
@@ -316,7 +316,7 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 				else
 				{
 					string fileName = GetFileNameForResource(r.Name);
-					using (FileStream fs = new FileStream(Path.Combine(TargetDirectory, fileName), FileMode.Create, FileAccess.Write))
+					using (FileStream fs = new FileStream(ValidatePath(Path.Combine(TargetDirectory, fileName)), FileMode.Create, FileAccess.Write))
 					{
 						stream.Position = 0;
 						stream.CopyTo(fs);
@@ -333,7 +333,7 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 				string resx = Path.ChangeExtension(fileName, ".resx");
 				try
 				{
-					using (FileStream fs = new FileStream(Path.Combine(TargetDirectory, resx), FileMode.Create, FileAccess.Write))
+					using (FileStream fs = new FileStream(ValidatePath(Path.Combine(TargetDirectory, resx)), FileMode.Create, FileAccess.Write))
 					using (ResXResourceWriter writer = new ResXResourceWriter(fs))
 					{
 						foreach (var entry in new ResourcesFile(entryStream))
@@ -352,7 +352,7 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 					// if the .resources can't be decoded, just save them as-is
 				}
 			}
-			using (FileStream fs = new FileStream(Path.Combine(TargetDirectory, fileName), FileMode.Create, FileAccess.Write))
+			using (FileStream fs = new FileStream(ValidatePath(Path.Combine(TargetDirectory, fileName)), FileMode.Create, FileAccess.Write))
 			{
 				entryStream.CopyTo(fs);
 			}
@@ -396,21 +396,21 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 			byte[] appIcon = CreateApplicationIcon(resources);
 			if (appIcon != null)
 			{
-				File.WriteAllBytes(Path.Combine(TargetDirectory, "app.ico"), appIcon);
+				File.WriteAllBytes(ValidatePath(Path.Combine(TargetDirectory, "app.ico")), appIcon);
 				yield return ("ApplicationIcon", "app.ico");
 			}
 
 			byte[] appManifest = CreateApplicationManifest(resources);
 			if (appManifest != null && !IsDefaultApplicationManifest(appManifest))
 			{
-				File.WriteAllBytes(Path.Combine(TargetDirectory, "app.manifest"), appManifest);
+				File.WriteAllBytes(ValidatePath(Path.Combine(TargetDirectory, "app.manifest")), appManifest);
 				yield return ("ApplicationManifest", "app.manifest");
 			}
 
 			var appConfig = module.FileName + ".config";
 			if (File.Exists(appConfig))
 			{
-				File.Copy(appConfig, Path.Combine(TargetDirectory, "app.config"), overwrite: true);
+				File.Copy(appConfig, ValidatePath(Path.Combine(TargetDirectory, "app.config")), overwrite: true);
 				yield return ("ApplicationConfig", Path.GetFileName(appConfig));
 			}
 		}
@@ -554,16 +554,16 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 						var value = (int?)fileSystem.GetValue("LongPathsEnabled");
 						if (value == 1)
 						{
-							return (true, int.MaxValue, 255);
+							return (true, 32767, 258 - 12);
 						}
-						return (false, 200, 30);
+						return (false, 258, 258 - 12);
 					default:
-						return (false, 200, 30);
+						return (false, 200, 200);
 				}
 			}
 			catch
 			{
-				return (false, 200, 30);
+				return (false, 200, 200);
 			}
 		}
 
@@ -572,7 +572,7 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 		/// </summary>
 		public static string CleanUpFileName(string text)
 		{
-			return CleanUpName(text, separateAtDots: false, treatAsFileName: false);
+			return CleanUpName(text, separateAtDots: false, lookForExtension: false);
 		}
 
 		/// <summary>
@@ -581,102 +581,35 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 		/// </summary>
 		public static string SanitizeFileName(string fileName)
 		{
-			return CleanUpName(fileName, separateAtDots: false, treatAsFileName: true);
+			return CleanUpName(fileName, separateAtDots: false, lookForExtension: true);
 		}
 
 		/// <summary>
 		/// Cleans up a node name for use as a file system name. If <paramref name="separateAtDots"/> is active,
-		/// dots are seen as segment separators. Each segment is limited to maxSegmentLength characters.
-		/// (see <see cref="GetLongPathSupport"/>) If <paramref name="treatAsFileName"/> is active,
-		/// we check for file a extension and try to preserve it, if it's valid.
+		/// dots are seen as segment separators. If <paramref name="lookForExtension"/> is active,
+		/// we check for file a extension and try to preserve it when separating paths at dots.
 		/// </summary>
-		static string CleanUpName(string text, bool separateAtDots, bool treatAsFileName)
+		static string CleanUpName(string name, bool separateAtDots, bool lookForExtension)
 		{
-			int pos = text.IndexOf(':');
-			if (pos > 0)
-				text = text.Substring(0, pos);
-			pos = text.IndexOf('`');
-			if (pos > 0)
-				text = text.Substring(0, pos);
-			text = text.Trim();
-			string extension = null;
-			int currentSegmentLength = 0;
-			var (supportsLongPaths, maxPathLength, maxSegmentLength) = longPathSupport.Value;
-			if (treatAsFileName)
-			{
-				// Check if input is a file name, i.e., has a valid extension
-				// If yes, preserve extension and append it at the end.
-				// But only, if the extension length does not exceed maxSegmentLength,
-				// if that's the case we just give up and treat the extension no different
-				// from the file name.
-				int lastDot = text.LastIndexOf('.');
-				if (lastDot >= 0 && text.Length - lastDot < maxSegmentLength)
-				{
-					string originalText = text;
-					extension = text.Substring(lastDot);
-					text = text.Remove(lastDot);
-					foreach (var c in extension)
-					{
-						if (!(char.IsLetterOrDigit(c) || c == '-' || c == '_' || c == '.'))
-						{
-							// extension contains an invalid character, therefore cannot be a valid extension.
-							extension = null;
-							text = originalText;
-							break;
-						}
-					}
-				}
-			}
-			// Whitelist allowed characters, replace everything else:
-			StringBuilder b = new StringBuilder(text.Length + (extension?.Length ?? 0));
-			foreach (var c in text)
-			{
-				currentSegmentLength++;
-				if (char.IsLetterOrDigit(c) || c == '-' || c == '_')
-				{
-					// if the current segment exceeds maxSegmentLength characters,
-					// skip until the end of the segment.
-					if (currentSegmentLength <= maxSegmentLength)
-						b.Append(c);
-				}
-				else if (c == '.' && b.Length > 0 && b[b.Length - 1] != '.')
-				{
-					// if the current segment exceeds maxSegmentLength characters,
-					// skip until the end of the segment.
-					if (separateAtDots || currentSegmentLength <= maxSegmentLength)
-						b.Append('.'); // allow dot, but never two in a row
+			string ext = string.Empty;
+			string cleanName = name;
 
-					// Reset length at end of segment.
-					if (separateAtDots)
-						currentSegmentLength = 0;
-				}
-				else if (treatAsFileName && (c == '/' || c == '\\') && currentSegmentLength > 0)
+			if (separateAtDots)
+			{
+				if (lookForExtension)
 				{
-					// if we treat this as a file name, we've started a new segment
-					b.Append(c);
-					currentSegmentLength = 0;
+					ext = Path.GetExtension(name);
+					cleanName = name.Substring(0, name.Length - ext.Length);
 				}
-				else
-				{
-					// if the current segment exceeds maxSegmentLength characters,
-					// skip until the end of the segment.
-					if (currentSegmentLength <= maxSegmentLength)
-						b.Append('-');
-				}
-				if (b.Length >= maxPathLength && !supportsLongPaths)
-					break;  // limit to 200 chars, if long paths are not supported.
+				cleanName = cleanName.Replace('.', Path.DirectorySeparatorChar);
 			}
-			if (b.Length == 0)
-				b.Append('-');
-			string name = b.ToString();
-			if (extension != null)
-				name += extension;
-			if (IsReservedFileSystemName(name))
-				return name + "_";
+
+			if (IsReservedFileSystemName(cleanName + ext))
+				cleanName += "_";
 			else if (name == ".")
-				return "_";
-			else
-				return name;
+				cleanName = "_";
+
+			return cleanName + ext;
 		}
 
 		/// <summary>
@@ -684,12 +617,12 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 		/// </summary>
 		public static string CleanUpDirectoryName(string text)
 		{
-			return CleanUpName(text, separateAtDots: false, treatAsFileName: false);
+			return CleanUpName(text, separateAtDots: false, lookForExtension: false);
 		}
 
 		public static string CleanUpPath(string text)
 		{
-			return CleanUpName(text, separateAtDots: true, treatAsFileName: false)
+			return CleanUpName(text, separateAtDots: true, lookForExtension: true)
 				.Replace('.', Path.DirectorySeparatorChar);
 		}
 
@@ -728,6 +661,63 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 		public static bool CanUseSdkStyleProjectFormat(PEFile module)
 		{
 			return TargetServices.DetectTargetFramework(module).Moniker != null;
+		}
+
+		/// <summary>
+		/// Validates whether a path is valid for a given file system
+		/// </summary>
+		/// <param name="path">Absolute path to validate.</param>
+		public string ValidatePath(string path, bool directory = false)
+		{
+			var (supportsLongPaths, maxPathLength, maxSegmentLength) = longPathSupport.Value;
+			if (!Path.IsPathRooted(path))
+				throw new Exception("Non-root path passed to ValidatePath().");
+
+			string dotnetPath;
+			try
+			{
+				// FileSystemInfo siblings shall throw an exception in case the path is not valid.
+				dotnetPath = directory ? new DirectoryInfo(path).FullName : new FileInfo(path).FullName;
+			}
+			catch (Exception ex)
+			{
+				if (path.Length > maxPathLength)
+				{
+					throw new PathTooLongException("Path too long. Max: " + maxPathLength + " - Length: " + path.Length + Environment.NewLine +
+						"Path: " + path, ex);
+				}
+				else if (path.Contains(Path.DirectorySeparatorChar))
+				{
+					var parts = path.Split(Path.DirectorySeparatorChar);
+
+					foreach (var part in parts)
+					{
+						if (part.Length > maxSegmentLength)
+						{
+							throw new PathTooLongException("Part of path is too long. Max: " + maxSegmentLength + "- Length: " + part.Length + Environment.NewLine +
+								"Path part: " + part + Environment.NewLine +
+								"Full path: " + path,
+								ex);
+						}
+					}
+				}
+
+				throw new Exception("Path not valid.", ex);
+			}
+
+			if (dotnetPath.Length > maxPathLength)
+			{
+				if (Environment.OSVersion.Platform == PlatformID.Win32NT && !supportsLongPaths)
+					throw new PathTooLongException("Path is too long. Files could be created, but they won't be accessible by most applications." + Environment.NewLine +
+						"Path: " + dotnetPath + Environment.NewLine +
+						"Length: " + dotnetPath.Length + " - Maximum allowed: " + maxPathLength);
+				else
+					throw new PathTooLongException("Path is too long (" + dotnetPath.Length + " characters). ILSpy is configured not to allow paths with more than " +
+						maxPathLength + " characters." + Environment.NewLine +
+						"Path: " + dotnetPath);
+			}
+
+			return dotnetPath;
 		}
 	}
 
