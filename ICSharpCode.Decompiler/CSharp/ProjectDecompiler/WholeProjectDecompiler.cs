@@ -705,6 +705,10 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 				throw new Exception("Path not valid.", ex);
 			}
 
+			if (!dotnetPath.StartsWith(TargetDirectory))
+				throw new Exception("Path resolved outside of output directory: " + path + Environment.NewLine +
+					"Resolved to: " + dotnetPath);
+
 			if (dotnetPath.Length > maxPathLength)
 			{
 				if (Environment.OSVersion.Platform == PlatformID.Win32NT && !supportsLongPaths)
