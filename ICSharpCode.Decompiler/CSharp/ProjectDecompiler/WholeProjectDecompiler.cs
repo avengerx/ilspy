@@ -24,6 +24,7 @@ using System.Linq;
 using System.Reflection.Metadata;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -95,6 +96,28 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 		public int MaxDegreeOfParallelism { get; set; } = Environment.ProcessorCount;
 
 		public IProgress<DecompilationProgress> ProgressIndicator { get; set; }
+		#endregion
+
+		#region Regular expressions
+
+		private static string CharsToHexString(char[] charList)
+		{
+			var reHex = string.Empty;
+			foreach (var chr in charList)
+				reHex += string.Format("\\u{0:x4}", (int)chr);
+
+			return reHex;
+		}
+
+		private readonly static string InvalidPathRePat = "[" + CharsToHexString(Path.GetInvalidPathChars()) + "]";
+		private static Regex PathRe = new Regex(InvalidPathRePat);
+
+		private readonly static string InvalidFileNameRePat = "[" + CharsToHexString(Path.GetInvalidFileNameChars()) + "]";
+		private static Regex FileNameRe = new Regex(InvalidFileNameRePat);
+
+		private const string WindowsColonRePat = "(^[a-zA-Z]:)?[^:]+$";
+		private static Regex WindowsColonRe = new Regex(WindowsColonRePat);
+
 		#endregion
 
 		public WholeProjectDecompiler(IAssemblyResolver assemblyResolver)
@@ -589,9 +612,65 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 		/// dots are seen as segment separators. If <paramref name="lookForExtension"/> is active,
 		/// we check for file a extension and try to preserve it when separating paths at dots.
 		/// </summary>
-		static string CleanUpName(string name, bool separateAtDots, bool lookForExtension)
+		static string CleanUpName(string name, bool separateAtDots, bool lookForExtension, bool replaceInvalidChars = true)
 		{
+			char invalidCharPlaceholder = '_';
+
 			string ext = string.Empty;
+			if (replaceInvalidChars)
+			{
+				var changed = false;
+				string dir, file;
+				int pos;
+
+				pos = name.LastIndexOf(Path.DirectorySeparatorChar);
+				if (pos >= 0)
+				{
+					if (pos == name.Length - 1)
+					{
+						file = string.Empty;
+						dir = name;
+					}
+					else
+					{
+						file = name.Substring(pos + 1);
+						dir = name.Substring(0, pos);
+					}
+				}
+				else
+				{
+					dir = string.Empty;
+					file = name;
+				}
+
+				if (dir.Length > 0 && PathRe.IsMatch(dir))
+				{
+					changed = true;
+					dir = PathRe.Replace(dir, invalidCharPlaceholder.ToString());
+				}
+				if (file.Length > 0 && FileNameRe.IsMatch(file))
+				{
+					changed = true;
+					file = FileNameRe.Replace(file, invalidCharPlaceholder.ToString());
+				}
+
+				// Windows has issues handling colon, so we should only accept it as the second character
+				// in paths if it meets the "<drive>:\" format, but as this method is not supposed to handle
+				// rooted paths at all, let's just replace it
+				if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+				{
+					if (Regex.IsMatch(name, ":"))
+					{
+						changed = true;
+						file.Replace(':', invalidCharPlaceholder);
+						ext.Replace(':', invalidCharPlaceholder);
+					}
+				}
+
+				// This shall raise an exception if we failed to clean up the path!
+				if (changed) name = Path.Combine(dir, file);
+			}
+
 			string cleanName = name;
 
 			if (separateAtDots)
@@ -605,9 +684,9 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 			}
 
 			if (IsReservedFileSystemName(cleanName + ext))
-				cleanName += "_";
+				cleanName += invalidCharPlaceholder;
 			else if (name == ".")
-				cleanName = "_";
+				cleanName = invalidCharPlaceholder.ToString();
 
 			return cleanName + ext;
 		}
