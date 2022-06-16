@@ -24,6 +24,7 @@ using System.Linq;
 using System.Reflection.Metadata;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -129,6 +130,28 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 		// per-run members
 		HashSet<string> directories = new HashSet<string>(Platform.FileNameComparer);
 		readonly IProjectFileWriter projectWriter;
+
+		#region Regular expressions
+
+		private static string CharsToHexString(char[] charList)
+		{
+			var reHex = string.Empty;
+			foreach (var chr in charList)
+				reHex += string.Format("\\u{0:x4}", (int)chr);
+
+			return reHex;
+		}
+
+		private readonly static string InvalidPathRePat = "[" + CharsToHexString(Path.GetInvalidPathChars()) + "]";
+		private static Regex PathRe = new Regex(InvalidPathRePat);
+
+		private readonly static string InvalidFileNameRePat = "[" + CharsToHexString(Path.GetInvalidFileNameChars()) + "]";
+		private static Regex FileNameRe = new Regex(InvalidFileNameRePat);
+
+		private const string WindowsColonRePat = "(^[a-zA-Z]:)?[^:]+$";
+		private static Regex WindowsColonRe = new Regex(WindowsColonRePat);
+
+		#endregion
 
 		public void DecompileProject(PEFile moduleDefinition, string targetDirectory, CancellationToken cancellationToken = default(CancellationToken))
 		{
@@ -598,7 +621,7 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 		/// </summary>
 		public static string CleanUpFileName(string text)
 		{
-			return CleanUpName(text, separateAtDots: false, treatAsFileName: false);
+			return CleanUpName(text, separateAtDots: false, lookForExtension: false);
 		}
 
 		/// <summary>
@@ -607,102 +630,92 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 		/// </summary>
 		public static string SanitizeFileName(string fileName)
 		{
-			return CleanUpName(fileName, separateAtDots: false, treatAsFileName: true);
+			return CleanUpName(fileName, separateAtDots: false, lookForExtension: true);
 		}
 
 		/// <summary>
 		/// Cleans up a node name for use as a file system name. If <paramref name="separateAtDots"/> is active,
-		/// dots are seen as segment separators. Each segment is limited to maxSegmentLength characters.
-		/// (see <see cref="GetLongPathSupport"/>) If <paramref name="treatAsFileName"/> is active,
-		/// we check for file a extension and try to preserve it, if it's valid.
+		/// dots are seen as segment separators. If <paramref name="lookForExtension"/> is active,
+		/// we check for file a extension and try to preserve it when separating paths at dots.
 		/// </summary>
-		static string CleanUpName(string text, bool separateAtDots, bool treatAsFileName)
+		static string CleanUpName(string name, bool separateAtDots, bool lookForExtension, bool replaceInvalidChars = true)
 		{
-			int pos = text.IndexOf(':');
-			if (pos > 0)
-				text = text.Substring(0, pos);
-			pos = text.IndexOf('`');
-			if (pos > 0)
-				text = text.Substring(0, pos);
-			text = text.Trim();
-			string extension = null;
-			int currentSegmentLength = 0;
-			var (supportsLongPaths, maxPathLength, maxSegmentLength) = longPathSupport.Value;
-			if (treatAsFileName)
-			{
-				// Check if input is a file name, i.e., has a valid extension
-				// If yes, preserve extension and append it at the end.
-				// But only, if the extension length does not exceed maxSegmentLength,
-				// if that's the case we just give up and treat the extension no different
-				// from the file name.
-				int lastDot = text.LastIndexOf('.');
-				if (lastDot >= 0 && text.Length - lastDot < maxSegmentLength)
-				{
-					string originalText = text;
-					extension = text.Substring(lastDot);
-					text = text.Remove(lastDot);
-					foreach (var c in extension)
-					{
-						if (!(char.IsLetterOrDigit(c) || c == '-' || c == '_' || c == '.'))
-						{
-							// extension contains an invalid character, therefore cannot be a valid extension.
-							extension = null;
-							text = originalText;
-							break;
-						}
-					}
-				}
-			}
-			// Whitelist allowed characters, replace everything else:
-			StringBuilder b = new StringBuilder(text.Length + (extension?.Length ?? 0));
-			foreach (var c in text)
-			{
-				currentSegmentLength++;
-				if (char.IsLetterOrDigit(c) || c == '-' || c == '_')
-				{
-					// if the current segment exceeds maxSegmentLength characters,
-					// skip until the end of the segment.
-					if (currentSegmentLength <= maxSegmentLength)
-						b.Append(c);
-				}
-				else if (c == '.' && b.Length > 0 && b[b.Length - 1] != '.')
-				{
-					// if the current segment exceeds maxSegmentLength characters,
-					// skip until the end of the segment.
-					if (separateAtDots || currentSegmentLength <= maxSegmentLength)
-						b.Append('.'); // allow dot, but never two in a row
+			char invalidCharPlaceholder = '_';
 
-					// Reset length at end of segment.
-					if (separateAtDots)
-						currentSegmentLength = 0;
-				}
-				else if (treatAsFileName && (c == '/' || c == '\\') && currentSegmentLength > 0)
+			string ext = string.Empty;
+			if (replaceInvalidChars)
+			{
+				var changed = false;
+				string dir, file;
+				int pos;
+
+				pos = name.LastIndexOf(Path.DirectorySeparatorChar);
+				if (pos >= 0)
 				{
-					// if we treat this as a file name, we've started a new segment
-					b.Append(c);
-					currentSegmentLength = 0;
+					if (pos == name.Length - 1)
+					{
+						file = string.Empty;
+						dir = name;
+					}
+					else
+					{
+						file = name.Substring(pos + 1);
+						dir = name.Substring(0, pos);
+					}
 				}
 				else
 				{
-					// if the current segment exceeds maxSegmentLength characters,
-					// skip until the end of the segment.
-					if (currentSegmentLength <= maxSegmentLength)
-						b.Append('-');
+					dir = string.Empty;
+					file = name;
 				}
-				if (b.Length >= maxPathLength && !supportsLongPaths)
-					break;  // limit to 200 chars, if long paths are not supported.
+
+				if (dir.Length > 0 && PathRe.IsMatch(dir))
+				{
+					changed = true;
+					dir = PathRe.Replace(dir, invalidCharPlaceholder.ToString());
+				}
+				if (file.Length > 0 && FileNameRe.IsMatch(file))
+				{
+					changed = true;
+					file = FileNameRe.Replace(file, invalidCharPlaceholder.ToString());
+				}
+
+				// Windows has issues handling colon, so we should only accept it as the second character
+				// in paths if it meets the "<drive>:\" format, but as this method is not supposed to handle
+				// rooted paths at all, let's just replace it
+				if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+				{
+					if (Regex.IsMatch(name, ":"))
+					{
+						changed = true;
+						file.Replace(':', invalidCharPlaceholder);
+						ext.Replace(':', invalidCharPlaceholder);
+					}
+				}
+
+				// This shall raise an exception if we failed to clean up the path!
+				if (changed)
+					name = Path.Combine(dir, file);
 			}
-			if (b.Length == 0)
-				b.Append('-');
-			string name = b.ToString();
-			if (extension != null)
-				name += extension;
-			if (IsReservedFileSystemName(name))
-				return name + "_";
+
+			string cleanName = name;
+
+			if (separateAtDots)
+			{
+				if (lookForExtension)
+				{
+					ext = Path.GetExtension(name);
+					cleanName = name.Substring(0, name.Length - ext.Length);
+				}
+				cleanName = cleanName.Replace('.', Path.DirectorySeparatorChar);
+			}
+
+			if (IsReservedFileSystemName(cleanName + ext))
+				cleanName += invalidCharPlaceholder;
 			else if (name == ".")
-				return "_";
-			else
-				return name;
+				cleanName = invalidCharPlaceholder.ToString();
+
+			return cleanName + ext;
 		}
 
 		/// <summary>
@@ -710,12 +723,12 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 		/// </summary>
 		public static string CleanUpDirectoryName(string text)
 		{
-			return CleanUpName(text, separateAtDots: false, treatAsFileName: false);
+			return CleanUpName(text, separateAtDots: false, lookForExtension: false);
 		}
 
 		public static string CleanUpPath(string text)
 		{
-			return CleanUpName(text, separateAtDots: true, treatAsFileName: false)
+			return CleanUpName(text, separateAtDots: true, lookForExtension: false)
 				.Replace('.', Path.DirectorySeparatorChar);
 		}
 
