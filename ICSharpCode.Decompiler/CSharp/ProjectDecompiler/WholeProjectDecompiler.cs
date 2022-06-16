@@ -242,6 +242,7 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 		IEnumerable<(string itemType, string fileName)> WriteCodeFilesInProject(Metadata.PEFile module, CancellationToken cancellationToken)
 		{
 			var metadata = module.Metadata;
+			var rootNamespace = module.Name.Replace(' ', '_');
 			var files = module.Metadata.GetTopLevelTypeDefinitions().Where(td => IncludeTypeWhenDecompilingProject(module, td)).GroupBy(
 				delegate (TypeDefinitionHandle h) {
 					var type = metadata.GetTypeDefinition(h);
@@ -253,7 +254,21 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 					}
 					else
 					{
-						string dir = Settings.UseNestedDirectoriesForNamespaces ? CleanUpPath(ns) : CleanUpDirectoryName(ns);
+						string dir;
+						if (Settings.UseNestedDirectoriesForNamespaces)
+						{
+							if (ns == rootNamespace)
+								ns = string.Empty;
+							else if (ns.StartsWith(rootNamespace + "."))
+								ns = ns.Substring(rootNamespace.Length + 1);
+
+							dir = CleanUpPath(ns);
+						}
+						else
+						{
+							dir = CleanUpDirectoryName(ns);
+						}
+
 						if (directories.Add(dir))
 							CreateDir(Path.Combine(TargetDirectory, dir));
 						return Path.Combine(dir, file);
@@ -292,6 +307,7 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 		#region WriteResourceFilesInProject
 		protected virtual IEnumerable<(string itemType, string fileName)> WriteResourceFilesInProject(Metadata.PEFile module)
 		{
+			var rootNamespace = module.Name.Replace(' ', '_');
 			foreach (var r in module.Resources.Where(r => r.ResourceType == ResourceType.Embedded))
 			{
 				Stream stream = r.TryOpenStream();
@@ -310,6 +326,10 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 							{
 								string fileName = SanitizeFileName(name)
 									.Replace('/', Path.DirectorySeparatorChar);
+
+								if (fileName.StartsWith(rootNamespace + "."))
+									fileName = fileName.Substring(rootNamespace.Length + 1);
+
 								string dirName = Path.GetDirectoryName(fileName);
 								if (!string.IsNullOrEmpty(dirName) && directories.Add(dirName))
 								{
@@ -346,6 +366,10 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 					{
 						stream.Position = 0;
 						string fileName = GetFileNameForResource(r.Name);
+
+						if (fileName.StartsWith(rootNamespace + "."))
+							fileName = fileName.Substring(rootNamespace.Length + 1);
+
 						foreach (var entry in WriteResourceToFile(fileName, r.Name, stream))
 						{
 							yield return entry;
@@ -355,6 +379,10 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 				else
 				{
 					string fileName = GetFileNameForResource(r.Name);
+
+					if (fileName.StartsWith(rootNamespace + "."))
+						fileName = fileName.Substring(rootNamespace.Length + 1);
+
 					using (FileStream fs = MakeFileStream(Path.Combine(TargetDirectory, fileName), FileMode.Create, FileAccess.Write))
 					{
 						stream.Position = 0;
