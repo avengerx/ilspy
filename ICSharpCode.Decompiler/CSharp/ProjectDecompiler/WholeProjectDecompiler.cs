@@ -308,6 +308,39 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 		protected virtual IEnumerable<(string itemType, string fileName)> WriteResourceFilesInProject(Metadata.PEFile module)
 		{
 			var rootNamespace = module.Name.Replace(' ', '_');
+
+			if (Settings.UseNestedDirectoriesForNamespaces)
+			{
+				var dirCandidates = new Dictionary<string, uint>();
+				foreach (var r in module.Resources.Where(r => r.ResourceType == ResourceType.Embedded))
+				{
+					var resName = r.Name;
+
+					if (resName.StartsWith(rootNamespace + "."))
+						resName = resName.Substring(rootNamespace.Length + 1);
+
+					var pathParts = resName.Split('.');
+					if (pathParts.Length > 2)
+					{
+						var thisCandidate = "";
+						for (int i = 0; i < pathParts.Length - 1; i++)
+						{
+							thisCandidate = Path.Combine(thisCandidate, pathParts[i]);
+							if (dirCandidates.ContainsKey(thisCandidate))
+								dirCandidates[thisCandidate]++;
+							else
+								dirCandidates.Add(thisCandidate, 1);
+						}
+					}
+				}
+
+				// Just creating the directory here should be enough. GetFileNameForResource()
+				// will look up if a matching directory already exists for us.
+				foreach (var candidate in dirCandidates)
+					if (candidate.Value > 2 && directories.Add(candidate.Key))
+						CreateDir(Path.Combine(TargetDirectory, candidate.Key));
+			}
+
 			foreach (var r in module.Resources.Where(r => r.ResourceType == ResourceType.Embedded))
 			{
 				Stream stream = r.TryOpenStream();
@@ -365,10 +398,11 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 					else
 					{
 						stream.Position = 0;
-						string fileName = GetFileNameForResource(r.Name);
 
+						string fileName = r.Name;
 						if (fileName.StartsWith(rootNamespace + "."))
 							fileName = fileName.Substring(rootNamespace.Length + 1);
+						fileName = GetFileNameForResource(fileName);
 
 						foreach (var entry in WriteResourceToFile(fileName, r.Name, stream))
 						{
@@ -378,10 +412,10 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 				}
 				else
 				{
-					string fileName = GetFileNameForResource(r.Name);
-
+					string fileName = r.Name;
 					if (fileName.StartsWith(rootNamespace + "."))
 						fileName = fileName.Substring(rootNamespace.Length + 1);
+					fileName = GetFileNameForResource(fileName);
 
 					using (FileStream fs = MakeFileStream(Path.Combine(TargetDirectory, fileName), FileMode.Create, FileAccess.Write))
 					{
@@ -430,12 +464,12 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 		{
 			// Clean up the name first and ensure the length does not exceed the maximum length
 			// supported by the OS.
-			fullName = SanitizeFileName(fullName);
+			fullName = Settings.UseNestedDirectoriesForNamespaces ? CleanUpName(fullName, true, true, false) : SanitizeFileName(fullName);
+
 			// The purpose of the below algorithm is to "maximize" the directory name and "minimize" the file name.
 			// That is, a full name of the form "Namespace1.Namespace2{...}.NamespaceN.ResourceName" is split such that
 			// the directory part Namespace1\Namespace2\... reuses as many existing directories as
 			// possible, and only the remaining name parts are used as prefix for the filename.
-			// This is not affected by the UseNestedDirectoriesForNamespaces setting.
 			string[] splitName = fullName.Split(Path.DirectorySeparatorChar);
 			string fileName = string.Join(".", splitName);
 			string separator = Path.DirectorySeparatorChar.ToString();
