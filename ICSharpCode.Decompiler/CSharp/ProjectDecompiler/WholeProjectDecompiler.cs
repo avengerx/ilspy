@@ -246,7 +246,13 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 			var files = module.Metadata.GetTopLevelTypeDefinitions().Where(td => IncludeTypeWhenDecompilingProject(module, td)).GroupBy(
 				delegate (TypeDefinitionHandle h) {
 					var type = metadata.GetTypeDefinition(h);
-					string file = CleanUpFileName(metadata.GetString(type.Name)) + ".cs";
+					var typeName = metadata.GetString(type.Name);
+
+					int backtickPos = typeName.IndexOf('`');
+					if (backtickPos > 1)
+						typeName = typeName.Substring(0, backtickPos);
+
+					string file = CleanUpFileName(typeName) + ".cs";
 					string ns = metadata.GetString(type.Namespace);
 					if (string.IsNullOrEmpty(ns))
 					{
