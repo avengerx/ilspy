@@ -915,7 +915,7 @@ namespace ICSharpCode.Decompiler.CSharp.ProjectDecompiler
 			return dotnetPath;
 		}
 
-		void WriteBytesTo(string path, byte[] sequence) => File.WriteAllBytes(ValidatePath(Path.Combine(TargetDirectory, "app.ico")), sequence);
+		void WriteBytesTo(string path, byte[] sequence) => File.WriteAllBytes(ValidatePath(path), sequence);
 
 		#endregion Path checking helpers
 	}
